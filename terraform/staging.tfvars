@@ -19,7 +19,7 @@ throttle_rate_limit  = 100
 throttle_burst_limit = 200
 
 # GitHub Repository for OIDC (update with your repo)
-github_repo = "your-org/your-repo"
+github_repo = "karolisliutack/DEMO-2"
 
 # Set to true if GitHub OIDC provider doesn't exist in your AWS account yet
 create_github_oidc_provider = false
