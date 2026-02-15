@@ -1,5 +1,59 @@
 data "aws_region" "current" {}
 
+# IAM role for API Gateway CloudWatch logging
+resource "aws_iam_role" "api_gateway_cloudwatch" {
+  name = "${var.environment}-health-check-apigw-logs-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "apigateway.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+
+  tags = {
+    Name        = "${var.environment}-health-check-apigw-logs-role"
+    Environment = var.environment
+    Project     = "health-check-api"
+    ManagedBy   = "Terraform"
+  }
+}
+
+resource "aws_iam_role_policy" "api_gateway_cloudwatch" {
+  name = "${var.environment}-apigw-logs-policy"
+  role = aws_iam_role.api_gateway_cloudwatch.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:DescribeLogGroups",
+          "logs:DescribeLogStreams",
+          "logs:PutLogEvents",
+          "logs:GetLogEvents",
+          "logs:FilterLogEvents"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# Set the CloudWatch role at the API Gateway account level
+resource "aws_api_gateway_account" "this" {
+  cloudwatch_role_arn = aws_iam_role.api_gateway_cloudwatch.arn
+}
+
 # CloudWatch log group for API Gateway
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/aws/apigateway/${var.environment}-health-check-api"
@@ -166,6 +220,8 @@ resource "aws_api_gateway_stage" "this" {
     Project     = "health-check-api"
     ManagedBy   = "Terraform"
   }
+
+  depends_on = [aws_api_gateway_account.this]
 }
 
 # Method settings for throttling
