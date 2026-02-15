@@ -255,12 +255,6 @@ jobs:
           name: lambda-package-${{ needs.package-lambda.outputs.lambda-version }}
           path: ./
 
-      - name: Download Terraform plan
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16  # v4.1.8
-        with:
-          name: tfplan-staging-${{ needs.package-lambda.outputs.lambda-version }}
-          path: terraform/
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3.1.2
         with:
@@ -285,11 +279,13 @@ jobs:
 
       - name: Terraform Apply
         working-directory: terraform
+        env:
+          TF_VAR_lambda_zip_path: ../${{ needs.package-lambda.outputs.lambda-artifact-name }}
         run: |
           terraform apply \
+            -var-file="staging.tfvars" \
             -auto-approve \
-            -input=false \
-            staging.tfplan
+            -input=false
 
       - name: Capture outputs
         id: output
@@ -332,12 +328,6 @@ jobs:
           name: lambda-package-${{ needs.package-lambda.outputs.lambda-version }}
           path: ./
 
-      - name: Download Terraform plan
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16  # v4.1.8
-        with:
-          name: tfplan-prod-${{ needs.package-lambda.outputs.lambda-version }}
-          path: terraform/
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3.1.2
         with:
@@ -362,11 +352,13 @@ jobs:
 
       - name: Terraform Apply
         working-directory: terraform
+        env:
+          TF_VAR_lambda_zip_path: ../${{ needs.package-lambda.outputs.lambda-artifact-name }}
         run: |
           terraform apply \
+            -var-file="prod.tfvars" \
             -auto-approve \
-            -input=false \
-            prod.tfplan
+            -input=false
 
       - name: Capture outputs
         id: output
