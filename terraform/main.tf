@@ -56,6 +56,7 @@ module "lambda" {
   subnet_ids           = module.vpc.private_subnet_ids
   security_group_id    = module.vpc.security_group_id
   kms_key_arn          = module.kms.key_arn
+  lambda_zip_path      = var.lambda_zip_path
 
   depends_on = [module.iam, module.dynamodb, module.vpc]
 }

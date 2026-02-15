@@ -66,6 +66,11 @@ variable "throttle_burst_limit" {
   }
 }
 
+variable "lambda_zip_path" {
+  description = "Path to the Lambda deployment zip file"
+  type        = string
+}
+
 variable "github_repo" {
   description = "GitHub repository in format 'org/repo' for OIDC trust"
   type        = string

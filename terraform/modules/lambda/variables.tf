@@ -42,3 +42,9 @@ variable "kms_key_arn" {
   type        = string
   nullable    = false
 }
+
+variable "lambda_zip_path" {
+  description = "Path to the Lambda deployment zip file"
+  type        = string
+  nullable    = false
+}

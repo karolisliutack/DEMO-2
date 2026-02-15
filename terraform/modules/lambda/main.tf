@@ -1,9 +1,3 @@
-data "archive_file" "lambda" {
-  type        = "zip"
-  source_dir  = "${path.module}/../../lambda"
-  output_path = "${path.module}/lambda_function.zip"
-}
-
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = "/aws/lambda/${var.environment}-health-check-function"
   retention_in_days = 365
@@ -18,11 +12,11 @@ resource "aws_cloudwatch_log_group" "lambda" {
 }
 
 resource "aws_lambda_function" "this" {
-  filename         = data.archive_file.lambda.output_path
+  filename         = var.lambda_zip_path
   function_name    = "${var.environment}-health-check-function"
   role             = var.lambda_role_arn
   handler          = "health_check.lambda_handler"
-  source_code_hash = data.archive_file.lambda.output_base64sha256
+  source_code_hash = filebase64sha256(var.lambda_zip_path)
   runtime          = "python3.12"
   memory_size      = 128
   timeout          = 30
