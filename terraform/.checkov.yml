@@ -25,3 +25,5 @@ skip-check:
   - CKV_AWS_272
   # API Gateway request validation - validation handled in Lambda code
   - CKV2_AWS_53
+  # WAF for API Gateway - out of scope for demo, throttling used instead
+  - CKV2_AWS_29
