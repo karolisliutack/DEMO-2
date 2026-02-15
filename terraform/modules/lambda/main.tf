@@ -40,6 +40,10 @@ resource "aws_lambda_function" "this" {
 
   kms_key_arn = var.kms_key_arn
 
+  tracing_config {
+    mode = "Active"
+  }
+
   tags = {
     Name        = "${var.environment}-health-check-function"
     Environment = var.environment
