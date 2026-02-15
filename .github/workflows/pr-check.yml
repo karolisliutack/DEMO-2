@@ -1,0 +1,459 @@
+name: Pull Request Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'terraform/**'
+      - 'lambda/**'
+      - '.github/workflows/**'
+
+# Prevent concurrent PR checks for the same PR
+concurrency:
+  group: pr-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  security-scan:
+    name: Security & Compliance Scanning
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871  # v4.2.1
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@b466648d6e39e7c75324f25d83891162a721f2d6  # v1.0.3
+        with:
+          working_directory: terraform
+          soft_fail: false
+          format: default
+
+      - name: Run Checkov IaC scanner
+        uses: bridgecrewio/checkov-action@d25ff68f46579f4a4a0c1c4ef9eba9a4b1f2aeb5  # v12.2867.0
+        with:
+          directory: terraform
+          framework: terraform
+          soft_fail: false
+          output_format: cli
+
+      # Python Security Scanning
+      - name: Setup Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: lambda/requirements.txt
+
+      - name: Install security scanning tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit bandit
+
+      - name: Run pip-audit
+        run: |
+          pip-audit --requirement lambda/requirements.txt --desc
+
+      - name: Run Bandit
+        run: |
+          bandit -r lambda/ -f screen
+          bandit -r lambda/ -f json -o bandit-report.json
+
+      - name: Upload Bandit results
+        uses: actions/upload-artifact@84480863f228bb9747b473957fcc9e309aa96097  # v4.4.2
+        if: always()
+        with:
+          name: bandit-pr-${{ github.event.pull_request.number }}
+          path: bandit-report.json
+          retention-days: 30
+
+  terraform-validation:
+    name: Terraform Format & Validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871  # v4.2.1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3.1.2
+        with:
+          terraform_version: ~1.9.0
+          terraform_wrapper: true
+
+      - name: Terraform Format Check
+        id: fmt
+        working-directory: terraform
+        run: |
+          terraform fmt -check -recursive -diff
+        continue-on-error: true
+
+      - name: Terraform Init (for validation)
+        working-directory: terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          terraform init -backend=false
+
+      - name: Terraform Validate
+        id: validate
+        working-directory: terraform
+        run: terraform validate -no-color
+
+      - name: Comment format results
+        if: steps.fmt.outcome == 'failure'
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `#### Terraform Format Check: \`${{ steps.fmt.outcome }}\`
+
+            **Action Required**: Run \`terraform fmt -recursive\` to format your Terraform files.
+
+            <details><summary>Show Format Differences</summary>
+
+            \`\`\`diff
+            ${{ steps.fmt.outputs.stdout }}
+            \`\`\`
+
+            </details>`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+  terraform-plan-staging:
+    name: Terraform Plan (Staging)
+    runs-on: ubuntu-latest
+    needs: [security-scan, terraform-validation]
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871  # v4.2.1
+
+      - name: Setup Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: lambda/requirements.txt
+
+      - name: Package Lambda (for plan)
+        run: |
+          mkdir -p build/lambda
+          pip install -r lambda/requirements.txt --target build/lambda
+          cp lambda/*.py build/lambda/
+          cd build/lambda
+          zip -r ../../lambda-pr-${{ github.event.pull_request.number }}.zip .
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3.1.2
+        with:
+          terraform_version: ~1.9.0
+          terraform_wrapper: true
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502  # v4.0.2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=staging/terraform.tfstate" \
+            -backend-config="region=${{ secrets.AWS_REGION }}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: terraform
+        env:
+          TF_VAR_lambda_zip_path: ../lambda-pr-${{ github.event.pull_request.number }}.zip
+        run: |
+          terraform plan \
+            -var-file="staging.tfvars" \
+            -input=false \
+            -no-color \
+            -out=tfplan 2>&1 | tee plan-output.txt
+
+          # Capture exit code
+          PLAN_EXIT_CODE=${PIPESTATUS[0]}
+          echo "exit-code=${PLAN_EXIT_CODE}" >> $GITHUB_OUTPUT
+
+          # Extract plan summary
+          echo 'plan-summary<<EOF' >> $GITHUB_OUTPUT
+          tail -n 30 plan-output.txt >> $GITHUB_OUTPUT
+          echo 'EOF' >> $GITHUB_OUTPUT
+
+      - name: Post plan as PR comment
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        if: always()
+        env:
+          PLAN_SUMMARY: ${{ steps.plan.outputs.plan-summary }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const planOutput = fs.readFileSync('terraform/plan-output.txt', 'utf8');
+
+            // Truncate if too long (GitHub comment size limit)
+            const maxLength = 65000;
+            const truncatedPlan = planOutput.length > maxLength
+              ? planOutput.substring(0, maxLength) + '\n\n... (truncated)'
+              : planOutput;
+
+            const output = `### Terraform Plan Results (Staging)
+
+            #### Plan Status: \`${{ steps.plan.outcome }}\`
+
+            <details><summary>Show Full Plan Output</summary>
+
+            \`\`\`hcl
+            ${truncatedPlan}
+            \`\`\`
+
+            </details>
+
+            **Pushed by**: @${{ github.actor }}
+            **Plan for PR**: #${{ github.event.pull_request.number }}
+            `;
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment => {
+              return comment.user.type === 'Bot' && comment.body.includes('Terraform Plan Results (Staging)');
+            });
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: output
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: output
+              });
+            }
+
+  terraform-plan-prod:
+    name: Terraform Plan (Production)
+    runs-on: ubuntu-latest
+    needs: [security-scan, terraform-validation]
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871  # v4.2.1
+
+      - name: Setup Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: lambda/requirements.txt
+
+      - name: Package Lambda (for plan)
+        run: |
+          mkdir -p build/lambda
+          pip install -r lambda/requirements.txt --target build/lambda
+          cp lambda/*.py build/lambda/
+          cd build/lambda
+          zip -r ../../lambda-pr-${{ github.event.pull_request.number }}.zip .
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3.1.2
+        with:
+          terraform_version: ~1.9.0
+          terraform_wrapper: true
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502  # v4.0.2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=prod/terraform.tfstate" \
+            -backend-config="region=${{ secrets.AWS_REGION }}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: terraform
+        env:
+          TF_VAR_lambda_zip_path: ../lambda-pr-${{ github.event.pull_request.number }}.zip
+        run: |
+          terraform plan \
+            -var-file="prod.tfvars" \
+            -input=false \
+            -no-color \
+            -out=tfplan-prod 2>&1 | tee plan-output-prod.txt
+
+          PLAN_EXIT_CODE=${PIPESTATUS[0]}
+          echo "exit-code=${PLAN_EXIT_CODE}" >> $GITHUB_OUTPUT
+
+      - name: Post plan as PR comment
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        if: always()
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const planOutput = fs.readFileSync('terraform/plan-output-prod.txt', 'utf8');
+
+            const maxLength = 65000;
+            const truncatedPlan = planOutput.length > maxLength
+              ? planOutput.substring(0, maxLength) + '\n\n... (truncated)'
+              : planOutput;
+
+            const output = `### Terraform Plan Results (Production)
+
+            #### Plan Status: \`${{ steps.plan.outcome }}\`
+
+            <details><summary>Show Full Plan Output</summary>
+
+            \`\`\`hcl
+            ${truncatedPlan}
+            \`\`\`
+
+            </details>
+
+            **Pushed by**: @${{ github.actor }}
+            **Plan for PR**: #${{ github.event.pull_request.number }}
+            `;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment => {
+              return comment.user.type === 'Bot' && comment.body.includes('Terraform Plan Results (Production)');
+            });
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: output
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: output
+              });
+            }
+
+  pr-summary:
+    name: PR Check Summary
+    runs-on: ubuntu-latest
+    needs: [security-scan, terraform-validation, terraform-plan-staging, terraform-plan-prod]
+    if: always()
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Generate PR summary
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const securityScan = '${{ needs.security-scan.result }}';
+            const terraformValidation = '${{ needs.terraform-validation.result }}';
+            const planStaging = '${{ needs.terraform-plan-staging.result }}';
+            const planProd = '${{ needs.terraform-plan-prod.result }}';
+
+            const statusEmoji = (status) => {
+              if (status === 'success') return '✅';
+              if (status === 'failure') return '❌';
+              return '⚠️';
+            };
+
+            const output = `## PR Validation Summary
+
+            | Check | Status |
+            |-------|--------|
+            | Security Scan | ${statusEmoji(securityScan)} ${securityScan} |
+            | Terraform Validation | ${statusEmoji(terraformValidation)} ${terraformValidation} |
+            | Plan (Staging) | ${statusEmoji(planStaging)} ${planStaging} |
+            | Plan (Production) | ${statusEmoji(planProd)} ${planProd} |
+
+            **PR**: #${{ github.event.pull_request.number }}
+            **Author**: @${{ github.event.pull_request.user.login }}
+            **Reviewed at**: ${new Date().toUTCString()}
+
+            ${securityScan === 'failure' || terraformValidation === 'failure' ? '⚠️ **Action Required**: Fix security or validation issues before merging.' : ''}
+            `;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment => {
+              return comment.user.type === 'Bot' && comment.body.includes('PR Validation Summary');
+            });
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: output
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: output
+              });
+            }
