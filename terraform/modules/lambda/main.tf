@@ -12,11 +12,11 @@ resource "aws_cloudwatch_log_group" "lambda" {
 }
 
 resource "aws_lambda_function" "this" {
-  filename         = var.lambda_zip_path
+  filename         = var.lambda_zip_path != "" ? var.lambda_zip_path : null
   function_name    = "${var.environment}-health-check-function"
   role             = var.lambda_role_arn
   handler          = "health_check.lambda_handler"
-  source_code_hash = filebase64sha256(var.lambda_zip_path)
+  source_code_hash = var.lambda_zip_path != "" ? filebase64sha256(var.lambda_zip_path) : null
   runtime          = "python3.12"
   memory_size      = 128
   timeout          = 30
