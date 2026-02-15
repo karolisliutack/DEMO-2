@@ -41,3 +41,9 @@ variable "throttle_burst_limit" {
     error_message = "Throttle burst limit must be greater than 0."
   }
 }
+
+variable "kms_key_arn" {
+  description = "ARN of the KMS key for encrypting CloudWatch logs"
+  type        = string
+  nullable    = false
+}

@@ -69,6 +69,7 @@ module "api_gateway" {
   lambda_invoke_arn     = module.lambda.invoke_arn
   throttle_rate_limit   = var.throttle_rate_limit
   throttle_burst_limit  = var.throttle_burst_limit
+  kms_key_arn           = module.kms.key_arn
 
   depends_on = [module.lambda]
 }

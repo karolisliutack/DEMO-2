@@ -3,7 +3,8 @@ data "aws_region" "current" {}
 # CloudWatch log group for API Gateway
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/aws/apigateway/${var.environment}-health-check-api"
-  retention_in_days = 14
+  retention_in_days = 365
+  kms_key_id        = var.kms_key_arn
 
   tags = {
     Name        = "${var.environment}-health-check-api-logs"
@@ -20,6 +21,10 @@ resource "aws_api_gateway_rest_api" "this" {
 
   endpoint_configuration {
     types = ["REGIONAL"]
+  }
+
+  lifecycle {
+    create_before_destroy = true
   }
 
   tags = {
@@ -134,9 +139,10 @@ resource "aws_api_gateway_deployment" "this" {
 
 # API stage
 resource "aws_api_gateway_stage" "this" {
-  deployment_id = aws_api_gateway_deployment.this.id
-  rest_api_id   = aws_api_gateway_rest_api.this.id
-  stage_name    = var.environment
+  deployment_id        = aws_api_gateway_deployment.this.id
+  rest_api_id          = aws_api_gateway_rest_api.this.id
+  stage_name           = var.environment
+  xray_tracing_enabled = true
 
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.api.arn
@@ -172,7 +178,7 @@ resource "aws_api_gateway_method_settings" "all" {
     throttling_rate_limit  = var.throttle_rate_limit
     throttling_burst_limit = var.throttle_burst_limit
     logging_level          = "INFO"
-    data_trace_enabled     = true
+    data_trace_enabled     = false
     metrics_enabled        = true
   }
 }

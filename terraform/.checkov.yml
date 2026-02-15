@@ -1,0 +1,6 @@
+soft-fail: false
+skip-check:
+  - CKV_AWS_120  # API Gateway caching not needed for health check endpoint
+  - CKV_AWS_225  # API Gateway method caching not needed for health check endpoint
+  - CKV_AWS_290  # Deploy role requires write access for Terraform operations
+  - CKV_AWS_355  # EC2/VPC operations require wildcard resource (AWS limitation)
