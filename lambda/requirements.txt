@@ -1,0 +1,4 @@
+# AWS SDK for Python
+# Note: boto3 is included in the AWS Lambda Python runtime by default,
+# but it's good practice to list it for local development and testing
+boto3>=1.34.0
