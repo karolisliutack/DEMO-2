@@ -45,7 +45,7 @@ jobs:
           format: default
 
       - name: Run Checkov IaC scanner
-        uses: bridgecrewio/checkov-action@d25ff68f46579f4a4a0c1c4ef9eba9a4b1f2aeb5  # v12.2867.0
+        uses: bridgecrewio/checkov-action@v12
         with:
           directory: terraform
           framework: terraform
