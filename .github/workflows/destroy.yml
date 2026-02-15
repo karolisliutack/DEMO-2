@@ -89,17 +89,15 @@ jobs:
             -backend-config="region=${{ secrets.AWS_REGION }}" \
             -backend-config="encrypt=true"
 
-      - name: Terraform Destroy Plan
-        working-directory: terraform
+      - name: Create dummy Lambda zip (required for Terraform validation)
         run: |
-          echo "### Resources to be destroyed (Staging)" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          terraform plan -destroy -var-file="staging.tfvars" -no-color | tee destroy-plan.txt
-          cat destroy-plan.txt >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "placeholder" > /tmp/dummy.py
+          cd /tmp && zip dummy.zip dummy.py
 
       - name: Terraform Destroy
         working-directory: terraform
+        env:
+          TF_VAR_lambda_zip_path: /tmp/dummy.zip
         run: |
           terraform destroy \
             -var-file="staging.tfvars" \
@@ -155,23 +153,15 @@ jobs:
             -backend-config="region=${{ secrets.AWS_REGION }}" \
             -backend-config="encrypt=true"
 
-      - name: Terraform Destroy Plan
-        working-directory: terraform
+      - name: Create dummy Lambda zip (required for Terraform validation)
         run: |
-          echo "### Resources to be destroyed (Production)" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          terraform plan -destroy -var-file="prod.tfvars" -no-color | tee destroy-plan.txt
-          cat destroy-plan.txt >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-
-      - name: Final confirmation check
-        run: |
-          echo "::warning::You are about to destroy PRODUCTION infrastructure"
-          echo "This action cannot be undone without redeploying from scratch"
-          sleep 5
+          echo "placeholder" > /tmp/dummy.py
+          cd /tmp && zip dummy.zip dummy.py
 
       - name: Terraform Destroy
         working-directory: terraform
+        env:
+          TF_VAR_lambda_zip_path: /tmp/dummy.zip
         run: |
           terraform destroy \
             -var-file="prod.tfvars" \
